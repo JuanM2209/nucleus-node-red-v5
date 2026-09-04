@@ -7,7 +7,7 @@ device, without touching the production instance.
 | Instance | Container | Image | Port | Data |
 |---|---|---|---|---|
 | Legacy (production) | `nucleus-node-red` | `tyrionintegration/nucleus-node-red` | 1880 | volume `node-red` |
-| New | `Node-Red-V5` | `node-red:5.0.6-tyrion3-armv7` (built here) | **1885** | volume `node-red-v5` |
+| New | `Node-Red-V5` | `node-red:5.0.6-tyrion4-armv7` (built here) | **1885** | volume `node-red-v5` |
 
 Both use `--network host`, so the new instance is reachable on the device at
 `http://<device-ip>:1885` and can be exposed through the Nucleus portal like
@@ -49,17 +49,17 @@ To build Node-RED 5.x for arm/v7 yourself you need Docker with buildx and QEMU
 
 ```bash
 cd image && sh build-armv7.sh
-docker save node-red:5.0.6-tyrion3-armv7 -o nodered.tar
+docker save node-red:5.0.6-tyrion4-armv7 -o nodered.tar
 ```
 
 A pre-built archive is attached to the GitHub release
-`nodered-5.0.6-tyrion3-armv7` of this repo.
+`nodered-5.0.6-tyrion4-armv7` of this repo.
 
 On the device (Cockpit terminal or SSH, run as a user in the `docker` group):
 
 ```bash
 cd /data
-curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-tyrion3-armv7/nodered-5.0.6-tyrion3-armv7.tar
+curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-tyrion4-armv7/nodered-5.0.6-tyrion4-armv7.tar
 sha256sum nrv5.tar          # compare with the release notes
 docker load -i nrv5.tar
 sh scripts/run-node-red-v5.sh
@@ -75,7 +75,7 @@ breaks `\` line continuations, so it is written on one line inside the file).
 docker run -d --name Node-Red-V5 --restart unless-stopped --network host \
   -e PORT=1885 -e NODE_OPTIONS=--max-old-space-size=256 \
   --memory 400m --memory-swap 400m --log-driver journald \
-  -v node-red-v5:/data node-red:5.0.6-tyrion3-armv7
+  -v node-red-v5:/data node-red:5.0.6-tyrion4-armv7
 ```
 
 * `--network host` + `PORT=1885`: the official image's `settings.js` reads
@@ -244,29 +244,47 @@ package instead, Tyrion would have to republish it against a modern `level`.
 
 ## Size
 
-| Archive | Contents | Size |
+| Archive | Contents | Download | Flat rootfs |
+|---|---|---|---|
+| `nodered-4.1.14-22-armv7` | stock image, no palette | 187 MB | 553 MB |
+| `nodered-5.0.6-22-armv7` | stock image, no palette | 187 MB | 552 MB |
+| `nodered-5.0.6-tyrion4-armv7` | 18 palettes | 106 MB | 377 MB |
+| **`nodered-5.0.6-tyrion4-armv7`** | **18 palettes** | **75 MB** | **257 MB** |
+
+Fully loaded and 60 % smaller than the stock image. Every removal below was
+applied to a copy of the image, measured on the flat rootfs, and boot-tested
+to 18 modules / 0 errors / Tyrion plugin / healthcheck before being adopted.
+The deltas are marked `NUCLEUS DELTA n` in
+[`image/Dockerfile.nucleus`](image/Dockerfile.nucleus).
+
+| Delta | What | Saving |
 |---|---|---|
-| `nodered-4.1.14-22-armv7` | stock image, no palette | 187 MB |
-| `nodered-5.0.6-22-armv7` | stock image, no palette | 187 MB |
-| `nodered-5.0.6-tyrion-armv7` | **18 palettes included** | **105 MB** |
+| 2 | no devtools (`build-base`, `linux-headers`, `python3`) in the release image | ~200 MB |
+| 1 | `COPY --chown` instead of a later `RUN chown -R` that stored `node_modules` twice | ~116 MB |
+| 6 | prune dev-only content from `node_modules` — `@types`, `*.d.ts`, `*.map`, `*.md`, tests, docs, examples; the protobufjs code-generator CLI under `sparkplug-payload`; classic-level's glibc prebuilds and leveldb sources | ~70 MB |
+| 7 | strip the node binary (shipped unstripped by `node:22-alpine` for arm) | 15.9 MB |
+| 7 | drop the system npm; Node-RED's Manage Palette resolves its own bundled copy | 13.8 MB |
+| 6b | drop `git`, `openssh-client`, `nano`, `iputils` (Projects is disabled) | 9.1 MB |
+| 8 | flatten into one layer, so deletions of base-layer files stop being whiteouts | required for 6b/7 to count |
 
-Smaller *and* fully loaded, from two changes in
-[`image/Dockerfile.nucleus`](image/Dockerfile.nucleus):
+Two things were deliberately **kept** after testing showed removing them
+breaks something:
 
-* **No devtools in the release stage** (~200 MB). Upstream installs
-  `build-base`, `linux-headers`, `udev` and `python3` into the final image so
-  Manage Palette can compile native addons on the device. Everything this fleet
-  needs is compiled in the build stage, so the toolchain is dead weight at
-  runtime. The trade: adding a module with a native addon now means editing
-  `image/package.json` and rebuilding, not clicking Install on the device.
-* **`COPY --chown` instead of a later `RUN chown -R`** (~116 MB). The upstream
-  Dockerfile copies `node_modules` and *then* chowns it, which rewrites every
-  file into a second layer — the tree is stored twice.
+* `node_modules/npm/node_modules/node-gyp` — npm 11 resolves it before
+  every lifecycle script, so without it Manage Palette fails to install any
+  pure-JS module that has a `postinstall` (protobufjs, core-js, dashboard).
+  Only the redundant root copy is removed.
+* `@node-red/editor-client/public/types` — the Monaco typings the Function
+  node editor loads at runtime.
 
-`udev` is added back to the base packages (~1 MB), because upstream ships it
-only inside `install_devtools.sh`. Without `udevadm`, `SerialPort.list()`
-rejects with `spawn udevadm ENOENT` and the port-scan button in every serial
-node's config dialog stops working.
+Measured **optional** saving the owner can take by deleting three lines from
+`image/package.json`: the deprecated Dashboard 1.x stack (`node-red-dashboard`,
+`node-red-node-ui-table`, `node-red-contrib-ui-led`) plus its 12 orphaned
+dependencies, 10.6 MB. It was boot-tested clean but is left in because the
+legacy flows use it.
+
+`udev` stays (~1 MB): without `udevadm`, `SerialPort.list()` rejects and the
+port-scan button in every serial node's config dialog stops working.
 
 ## Verified result (NFBM-440, 2026-09-04)
 
@@ -339,7 +357,7 @@ reject anything that is not a finite number and do not send on that path.
 ```bash
 docker stop Node-Red-V5 && docker rm Node-Red-V5      # container only
 docker volume rm node-red-v5                          # flows of the new instance
-docker rmi node-red:5.0.6-tyrion3-armv7               # frees ~330 MB in /var/lib/docker
+docker rmi node-red:5.0.6-tyrion4-armv7               # frees ~260 MB in /var/lib/docker
 ```
 
 The legacy container is never modified by any of the above.

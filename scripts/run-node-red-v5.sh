@@ -4,7 +4,7 @@
 # Written as single-line docker commands: the Cockpit web terminal breaks "\" continuations.
 set -eu
 
-IMAGE="${IMAGE:-node-red:5.0.6-tyrion2-armv7}"
+IMAGE="${IMAGE:-node-red:5.0.6-tyrion3-armv7}"
 NAME="${NAME:-Node-Red-V5}"
 PORT="${PORT:-1885}"
 VOLUME="${VOLUME:-node-red-v5}"

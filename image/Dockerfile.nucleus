@@ -1,5 +1,5 @@
 # Derived from the official node-red-docker `docker-custom/Dockerfile.custom`.
-# Three deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
+# Four deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
 # changes stay easy to merge.
 ARG ARCH=amd64
 ARG NODE_VERSION=24
@@ -52,7 +52,18 @@ FROM base AS build
 RUN apk add --no-cache --virtual buildtools build-base linux-headers udev python3 && \
     npm install --unsafe-perm --no-update-notifier --no-fund --only=production && \
     /tmp/remove_native_gpio.sh && \
+    npm rebuild --build-from-source classic-level && \
     cp -R node_modules prod_node_modules
+
+# NUCLEUS DELTA 4 (in the RUN above): classic-level is rebuilt from source.
+# It ships prebuilds/linux-arm/classic-level.armv7.node built against GLIBC
+# and — unlike serialport and bcrypt, which both ship a .musl variant — has
+# no musl build for arm. node-gyp-build loads the glibc binary anyway on
+# Alpine, and it SEGFAULTS the whole process on armv7 the moment a flow
+# instantiates it (the Tyrion Cloud node uses level -> classic-level), which
+# a --restart policy turns into a crash loop rather than a visible error.
+# Compiling here links it against musl. This stage has build-base +
+# linux-headers + python3, so it is the only place it can be done.
 
 #### Stage RELEASE #####################################################################################################
 FROM base AS release

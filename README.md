@@ -289,9 +289,14 @@ port-scan button in every serial node's config dialog stops working.
 ## Verified result (NFBM-440, 2026-09-04)
 
 ```
-Node-Red-V5      | Up (healthy)   Node-RED v5.0.6  / Node.js v22.23.2   :1885 -> 200
-nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 -> 200
+Node-Red-V5      | Up (healthy)   Node-RED v5.0.6  / Node.js v22.23.2   :1885 -> 200   image 230 MB
+nucleus-node-red | Up             Node-RED v0.20.8 / Node.js v8.17.0    :1880 -> 200   image 315 MB
 ```
+
+The `tyrion4` image was passed through `tools/verify-image.sh` (4/4) before
+release, then loaded on the device and the container recreated on the same
+`node-red-v5` volume, so the operator's flows carried over untouched. The
+device ends with exactly four images and four containers.
 
 * Memory after start: new instance 37 MiB of its 400 MiB cap, legacy 85 MiB,
   ~680 MB still free on the device.

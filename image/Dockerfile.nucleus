@@ -1,5 +1,5 @@
 # Derived from the official node-red-docker `docker-custom/Dockerfile.custom`.
-# Two deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
+# Three deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
 # changes stay easy to merge.
 ARG ARCH=amd64
 ARG NODE_VERSION=24
@@ -23,7 +23,8 @@ RUN set -ex && \
         git \
         openssl \
         openssh-client \
-        ca-certificates && \
+        ca-certificates \
+        udev && \
     mkdir -p /usr/src/node-red /data && \
     deluser --remove-home node && \
     adduser -h /usr/src/node-red -D -H node-red -u 1000 && \
@@ -75,6 +76,12 @@ LABEL org.label-schema.build-date=${BUILD_DATE} \
     org.opencontainers.image.source="https://github.com/node-red/node-red-docker" \
     org.label-schema.arch=${ARCH} \
     authors="Dave Conway-Jones, Nick O'Leary, James Thomas, Raymond Mouthaan"
+
+# NUCLEUS DELTA 3 (in the apk block above): `udev` is added to the base
+# packages. Upstream ships it only inside install_devtools.sh, which DELTA 2
+# removes; without udevadm, serialport's SerialPort.list() rejects with
+# `spawn udevadm ENOENT` and the port-scan button in every serial node's
+# config dialog stops working.
 
 # NUCLEUS DELTA 1: --chown here instead of a later `RUN chown -R`, which would
 # duplicate the whole node_modules tree into a second layer (~116 MB).

@@ -1,37 +1,33 @@
 {
-    "name": "node-red-docker",
+    "name": "nucleus-node-red-v5",
     "version": "5.0.6",
-    "description": "Low-code programming for event-driven applications",
-    "homepage": "http://nodered.org",
+    "description": "Node-RED 5 for Nucleus edge devices, with the Tyrion Integration palette baked in. NOTE: @tyrion-integration/node-red-contrib-nucleus-services-cloud is deliberately absent - every published version pins level@^4, whose leveldown@4 native addon uses V8 APIs removed in Node 18+ and cannot compile on Node 22. Its successor cumulus-convection-cloud (level@^9 / classic-level, N-API) provides all five of its node types plus four more.",
     "license": "Apache-2.0",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/node-red/node-red-docker.git"
-    },
     "main": "node_modules/node-red/red/red.js",
     "scripts": {
         "start": "node $NODE_OPTIONS node_modules/node-red/red.js $FLOWS",
-        "debug": "node --inspect=0.0.0.0:9229 $NODE_OPTIONS node_modules/node-red/red.js $FLOWS",
-        "debug_brk": "node --inspect=0.0.0.0:9229 --inspect-brk $NODE_OPTIONS node_modules/node-red/red.js $FLOWS"
+        "debug": "node --inspect=0.0.0.0:9229 $NODE_OPTIONS node_modules/node-red/red.js $FLOWS"
     },
-    "contributors": [
-        {
-            "name": "Dave Conway-Jones"
-        },
-        {
-            "name": "Nick O'Leary"
-        },
-        {
-            "name": "James Thomas"
-        },
-        {
-            "name": "Raymond Mouthaan"
-        }
-    ],
     "dependencies": {
-        "node-red": "5.0.6"
-    },
-    "engines": {
-        "node": ">=18"
+        "node-red": "5.0.6",
+
+        "@tyrion-integration/cumulus-convection-cloud": "1.2.2",
+        "@tyrion-integration/node-red-contrib-nucleus-services-diagnostics": "0.13.1",
+        "@tyrion-integration/node-red-contrib-nucleus-services-io": "0.12.1",
+        "@tyrion-integration/nucleus-convection-diagnostics": "1.0.2",
+        "@tyrion-integration/nucleus-convection-io": "1.0.2",
+        "node-red-contrib-tyrion": "1.1.24",
+
+        "node-red-contrib-aedes": "1.3.0",
+        "node-red-contrib-cip-ethernet-ip": "1.1.3",
+        "node-red-contrib-counter": "0.1.6",
+        "node-red-contrib-fs": "1.4.1",
+        "node-red-contrib-modbus": "5.60.2",
+        "node-red-contrib-mqtt-sparkplug-plus": "3.1.1",
+        "node-red-contrib-socketcan": "1.4.2",
+        "node-red-contrib-ui-led": "0.4.11",
+        "node-red-contrib-unsafe-function": "0.8.0",
+        "node-red-dashboard": "3.6.6",
+        "node-red-node-ui-table": "0.4.5"
     }
 }

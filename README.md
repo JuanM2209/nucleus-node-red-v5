@@ -7,7 +7,7 @@ device, without touching the production instance.
 | Instance | Container | Image | Port | Data |
 |---|---|---|---|---|
 | Legacy (production) | `nucleus-node-red` | `tyrionintegration/nucleus-node-red` | 1880 | volume `node-red` |
-| New | `Node-Red-V5` | `node-red:5.0.6-22-armv7` (built here) | **1885** | volume `node-red-v5` |
+| New | `Node-Red-V5` | `node-red:5.0.6-tyrion-armv7` (built here) | **1885** | volume `node-red-v5` |
 
 Both use `--network host`, so the new instance is reachable on the device at
 `http://<device-ip>:1885` and can be exposed through the Nucleus portal like
@@ -49,17 +49,17 @@ To build Node-RED 5.x for arm/v7 yourself you need Docker with buildx and QEMU
 
 ```bash
 cd image && sh build-armv7.sh
-docker save node-red:5.0.6-22-armv7 -o nodered-5.0.6-22-armv7.tar
+docker save node-red:5.0.6-tyrion-armv7 -o nodered.tar
 ```
 
 A pre-built archive is attached to the GitHub release
-`nodered-5.0.6-22-armv7` of this repo.
+`nodered-5.0.6-tyrion-armv7` of this repo.
 
 On the device (Cockpit terminal or SSH, run as a user in the `docker` group):
 
 ```bash
 cd /data
-curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-22-armv7/nodered-5.0.6-22-armv7.tar
+curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-tyrion-armv7/nodered-5.0.6-tyrion-armv7.tar
 sha256sum nrv5.tar          # compare with the release notes
 docker load -i nrv5.tar
 sh scripts/run-node-red-v5.sh
@@ -75,7 +75,7 @@ breaks `\` line continuations, so it is written on one line inside the file).
 docker run -d --name Node-Red-V5 --restart unless-stopped --network host \
   -e PORT=1885 -e NODE_OPTIONS=--max-old-space-size=256 \
   --memory 400m --memory-swap 400m --log-driver journald \
-  -v node-red-v5:/data node-red:5.0.6-22-armv7
+  -v node-red-v5:/data node-red:5.0.6-tyrion-armv7
 ```
 
 * `--network host` + `PORT=1885`: the official image's `settings.js` reads
@@ -102,6 +102,65 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:1880/
 docker logs Node-Red-V5 2>&1 | grep -E 'Node-RED version|Node.js  version|Server now running'
 docker stats --no-stream
 ```
+
+## Bundled palette
+
+The image ships with the Tyrion Integration palette and the rest of the fleet's
+node set already installed, so a device needs no `npm install` and no Manage
+Palette round trip.
+
+| Purpose | Module |
+|---|---|
+| Cloud | `@tyrion-integration/cumulus-convection-cloud` |
+| Diagnostics | `nucleus-convection-diagnostics`, `node-red-contrib-nucleus-services-diagnostics` |
+| Analog / digital IN & OUT | `nucleus-convection-io`, `node-red-contrib-nucleus-services-io` |
+| Nucleus editor plugin | `node-red-contrib-tyrion` |
+| RS-485 / Modbus | `node-red-contrib-modbus` 5.60.2 |
+| MQTT broker | `node-red-contrib-aedes` 1.3.0 |
+| Sparkplug B | `node-red-contrib-mqtt-sparkplug-plus` 3.1.1 |
+| EtherNet/IP | `node-red-contrib-cip-ethernet-ip` |
+| CAN bus | `node-red-contrib-socketcan` |
+| Dashboard | `node-red-dashboard`, `node-red-node-ui-table`, `node-red-contrib-ui-led` |
+| Misc | `node-red-contrib-counter`, `node-red-contrib-fs`, `node-red-contrib-unsafe-function` |
+
+Several of these are versions the legacy Node 8 instance could never run:
+Modbus 4.1 to 5.60, Sparkplug 1.2 to 3.1 (birth-immediately, UDT templates,
+TCK conformance), aedes 0.3.1 to 1.3.0.
+
+### One deliberate omission
+
+`@tyrion-integration/node-red-contrib-nucleus-services-cloud` is **not**
+included. All eight published versions pin `level@^4`, whose `leveldown@4`
+native addon calls V8 APIs removed in Node 18 (`v8::AccessorSignature`), so it
+cannot compile on Node 22 — the build fails in `node-gyp`. Its successor
+`cumulus-convection-cloud` uses `level@^9` / `classic-level` (N-API, version
+stable) and registers all five of the old node types plus four more
+(`-file`, `-file-publish`, `broker-publish`, `broker-subscribe`).
+
+A flow using the old `nucleus-services-cloud*` node types needs those nodes
+swapped for their `cumulus-convection-cloud*` equivalents. To restore the old
+package instead, Tyrion would have to republish it against a modern `level`.
+
+## Size
+
+| Archive | Contents | Size |
+|---|---|---|
+| `nodered-4.1.14-22-armv7` | stock image, no palette | 187 MB |
+| `nodered-5.0.6-22-armv7` | stock image, no palette | 187 MB |
+| `nodered-5.0.6-tyrion-armv7` | **18 palettes included** | **105 MB** |
+
+Smaller *and* fully loaded, from two changes in
+[`image/Dockerfile.nucleus`](image/Dockerfile.nucleus):
+
+* **No devtools in the release stage** (~200 MB). Upstream installs
+  `build-base`, `linux-headers`, `udev` and `python3` into the final image so
+  Manage Palette can compile native addons on the device. Everything this fleet
+  needs is compiled in the build stage, so the toolchain is dead weight at
+  runtime. The trade: adding a module with a native addon now means editing
+  `image/package.json` and rebuilding, not clicking Install on the device.
+* **`COPY --chown` instead of a later `RUN chown -R`** (~116 MB). The upstream
+  Dockerfile copies `node_modules` and *then* chowns it, which rewrites every
+  file into a second layer — the tree is stored twice.
 
 ## Verified result (NFBM-440, 2026-09-04)
 
@@ -136,7 +195,7 @@ nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 ->
 ```bash
 docker stop Node-Red-V5 && docker rm Node-Red-V5      # container only
 docker volume rm node-red-v5                          # flows of the new instance
-docker rmi node-red:5.0.6-22-armv7                    # frees ~550 MB in /var/lib/docker
+docker rmi node-red:5.0.6-tyrion-armv7                # frees ~300 MB in /var/lib/docker
 ```
 
 The legacy container is never modified by any of the above.

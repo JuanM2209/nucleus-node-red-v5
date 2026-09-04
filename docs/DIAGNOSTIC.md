@@ -55,8 +55,15 @@ fails on the (absent) signature. Fix: build a classic docker-archive with
 | `4.1.0` | amd64, arm64, arm/v7 |
 | `3.1.15` | amd64, arm64, arm/v7, arm/v6 |
 
-Chosen: `nodered/node-red:4.1.14-22` (Node-RED 4.1.14 on Node.js 22), the
-newest release that still publishes arm/v7. Compressed size 196 MB, 17 layers.
+**No 5.x tag publishes arm/v7** — `5.0.6`, `5.0.6-24`, `5.0.6-minimal` and
+`5.0.6-debian` are all `amd64` + `arm64` only, because Node-RED 5 defaults to a
+`node:24` base and `node:24-alpine` has no arm/v7 build (`node:22-alpine` still
+does). Node-RED 5.0.6 itself only requires `node >= 22.9`.
+
+So the image running on the device is **built from the project's own
+`Dockerfile.custom`**, unmodified, with `ARCH=arm32v7` and `NODE_VERSION=22`
+(see `image/build-armv7.sh`). Result: `node-red:5.0.6-22-armv7`, 552 MB on disk,
+196 MB as a compressed archive.
 
 ## Existing containers
 

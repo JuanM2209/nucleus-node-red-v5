@@ -1,13 +1,13 @@
 # Nucleus Node-RED V5 sidecar
 
-Run a **current Node-RED (4.1.x, Node.js 22)** side by side with the legacy
+Run **the newest Node-RED (5.0.6, Node.js 22)** side by side with the legacy
 `nucleus-node-red` container (Node-RED 0.20.8 / Node.js 8) on a Nucleus edge
 device, without touching the production instance.
 
 | Instance | Container | Image | Port | Data |
 |---|---|---|---|---|
 | Legacy (production) | `nucleus-node-red` | `tyrionintegration/nucleus-node-red` | 1880 | volume `node-red` |
-| New | `Node-Red-V5` | `nodered/node-red:4.1.14-22` | **1885** | volume `node-red-v5` |
+| New | `Node-Red-V5` | `node-red:5.0.6-22-armv7` (built here) | **1885** | volume `node-red-v5` |
 
 Both use `--network host`, so the new instance is reachable on the device at
 `http://<device-ip>:1885` and can be exposed through the Nucleus portal like
@@ -18,9 +18,13 @@ any other port.
 The Nucleus i.MX7 devices run **Docker 18.03 on a 32-bit ARM (armv7l)** with
 kernel 4.9. Two things get in the way:
 
-1. **`nodered/node-red:latest` no longer ships an `arm/v7` build** (only
-   `amd64` and `arm64`). The newest tag that still publishes `linux/arm/v7` is
-   the `4.1.x` line, e.g. `4.1.14-22`. Always pin the full tag.
+1. **No official Node-RED 5.x image ships an `arm/v7` build.** Every `5.0.x`
+   tag is `amd64` + `arm64` only, because 5.x defaults to a `node:24` base and
+   Node 24 dropped 32-bit ARM. The last official arm/v7 image is the `4.1.x`
+   line. So the 5.0.6 image here is **built locally** with
+   [`image/build-armv7.sh`](image/build-armv7.sh), using the project's own
+   unmodified `Dockerfile.custom` on a `node:22-alpine` base (Node-RED 5
+   requires `node >= 22.9`, which node 22 satisfies).
 2. **Docker 18.03 cannot pull OCI-format images.** Node-RED images are now
    published as OCI image indexes; the old daemon fails with
    `Error response from daemon: missing signature key` (pulling by digest
@@ -36,18 +40,26 @@ See [docs/DIAGNOSTIC.md](docs/DIAGNOSTIC.md) for the full device diagnostic.
 On any machine with Python 3 (no Docker needed):
 
 ```bash
-python3 tools/pull-docker-archive.py nodered/node-red 4.1.14-22 arm v7 nodered-4.1.14-22-armv7.tar
-sha256sum nodered-4.1.14-22-armv7.tar
+# repack an image that already exists on Docker Hub for arm/v7 (e.g. the 4.1.x line)
+python3 tools/pull-docker-archive.py nodered/node-red 4.1.14-22 arm v7 out.tar
+```
+
+To build Node-RED 5.x for arm/v7 yourself you need Docker with buildx and QEMU
+(Docker Desktop has both):
+
+```bash
+cd image && sh build-armv7.sh
+docker save node-red:5.0.6-22-armv7 -o nodered-5.0.6-22-armv7.tar
 ```
 
 A pre-built archive is attached to the GitHub release
-`nodered-4.1.14-22-armv7` of this repo.
+`nodered-5.0.6-22-armv7` of this repo.
 
 On the device (Cockpit terminal or SSH, run as a user in the `docker` group):
 
 ```bash
 cd /data
-curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-4.1.14-22-armv7/nodered-4.1.14-22-armv7.tar
+curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-22-armv7/nodered-5.0.6-22-armv7.tar
 sha256sum nrv5.tar          # compare with the release notes
 docker load -i nrv5.tar
 sh scripts/run-node-red-v5.sh
@@ -63,7 +75,7 @@ breaks `\` line continuations, so it is written on one line inside the file).
 docker run -d --name Node-Red-V5 --restart unless-stopped --network host \
   -e PORT=1885 -e NODE_OPTIONS=--max-old-space-size=256 \
   --memory 400m --memory-swap 400m --log-driver journald \
-  -v node-red-v5:/data nodered/node-red:4.1.14-22
+  -v node-red-v5:/data node-red:5.0.6-22-armv7
 ```
 
 * `--network host` + `PORT=1885`: the official image's `settings.js` reads
@@ -94,11 +106,11 @@ docker stats --no-stream
 ## Verified result (NFBM-440, 2026-09-04)
 
 ```
-Node-Red-V5      | Up (healthy)   Node-RED v4.1.14 / Node.js v22.23.2   :1885 -> 200
+Node-Red-V5      | Up (healthy)   Node-RED v5.0.6  / Node.js v22.23.2   :1885 -> 200
 nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 -> 200
 ```
 
-* Memory after start: new instance 35 MiB of its 400 MiB cap, legacy 84 MiB,
+* Memory after start: new instance 37 MiB of its 400 MiB cap, legacy 85 MiB,
   ~680 MB still free on the device.
 * The image takes 553 MB in `/var/lib/docker`; `/data` kept 7.3 GB free.
 * The container health check (`/healthcheck.js`) reads `settings.uiPort`, so it
@@ -124,7 +136,7 @@ nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 ->
 ```bash
 docker stop Node-Red-V5 && docker rm Node-Red-V5      # container only
 docker volume rm node-red-v5                          # flows of the new instance
-docker rmi nodered/node-red:4.1.14-22                 # frees ~500 MB in /var/lib/docker
+docker rmi node-red:5.0.6-22-armv7                    # frees ~550 MB in /var/lib/docker
 ```
 
 The legacy container is never modified by any of the above.
@@ -136,5 +148,6 @@ README.md                   this file
 docs/DIAGNOSTIC.md          device diagnostic (hardware, Docker, network, containers)
 scripts/diagnose.sh         re-runs the diagnostic on any Nucleus device
 scripts/run-node-red-v5.sh  creates the Node-Red-V5 container
-tools/pull-docker-archive.py builds a docker-archive tar from Docker Hub
+image/                      official node-red-docker files + build-armv7.sh
+tools/pull-docker-archive.py builds a docker-archive tar from a registry
 ```

@@ -7,7 +7,7 @@ device, without touching the production instance.
 | Instance | Container | Image | Port | Data |
 |---|---|---|---|---|
 | Legacy (production) | `nucleus-node-red` | `tyrionintegration/nucleus-node-red` | 1880 | volume `node-red` |
-| New | `Node-Red-V5` | `node-red:5.0.6-tyrion2-armv7` (built here) | **1885** | volume `node-red-v5` |
+| New | `Node-Red-V5` | `node-red:5.0.6-tyrion3-armv7` (built here) | **1885** | volume `node-red-v5` |
 
 Both use `--network host`, so the new instance is reachable on the device at
 `http://<device-ip>:1885` and can be exposed through the Nucleus portal like
@@ -49,17 +49,17 @@ To build Node-RED 5.x for arm/v7 yourself you need Docker with buildx and QEMU
 
 ```bash
 cd image && sh build-armv7.sh
-docker save node-red:5.0.6-tyrion2-armv7 -o nodered.tar
+docker save node-red:5.0.6-tyrion3-armv7 -o nodered.tar
 ```
 
 A pre-built archive is attached to the GitHub release
-`nodered-5.0.6-tyrion2-armv7` of this repo.
+`nodered-5.0.6-tyrion3-armv7` of this repo.
 
 On the device (Cockpit terminal or SSH, run as a user in the `docker` group):
 
 ```bash
 cd /data
-curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-tyrion2-armv7/nodered-5.0.6-tyrion2-armv7.tar
+curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-tyrion3-armv7/nodered-5.0.6-tyrion3-armv7.tar
 sha256sum nrv5.tar          # compare with the release notes
 docker load -i nrv5.tar
 sh scripts/run-node-red-v5.sh
@@ -75,7 +75,7 @@ breaks `\` line continuations, so it is written on one line inside the file).
 docker run -d --name Node-Red-V5 --restart unless-stopped --network host \
   -e PORT=1885 -e NODE_OPTIONS=--max-old-space-size=256 \
   --memory 400m --memory-swap 400m --log-driver journald \
-  -v node-red-v5:/data node-red:5.0.6-tyrion2-armv7
+  -v node-red-v5:/data node-red:5.0.6-tyrion3-armv7
 ```
 
 * `--network host` + `PORT=1885`: the official image's `settings.js` reads
@@ -140,6 +140,39 @@ on a Nucleus with no serial line.
 Bridge (mbusd on TCP 2202). Starting the bridge while a flow here is polling
 will take the port away. The run script warns when another process already
 holds it.
+
+### The musl trap on 32-bit ARM
+
+Alpine uses **musl**; most prebuilt native addons are built against **glibc**.
+`node-gyp-build` picks a prebuild by platform+arch and, on Linux, by libc — but
+only when the package actually ships a musl variant. When it doesn't, the glibc
+binary gets loaded anyway and the process dies with SIGSEGV. There is no
+exception, no stack trace, and nothing in the Node-RED log: the whole runtime
+disappears mid-flow-start, and a `--restart` policy turns it into a crash loop.
+
+The three native modules in this image are a clean natural experiment:
+
+| Module | linux-arm prebuilds | Result on this device |
+|---|---|---|
+| `@serialport/bindings-cpp` | armv6.glibc, armv7.glibc, **armv7.musl** | works |
+| `bcrypt` | glibc, **musl** | works |
+| `classic-level` | armv6, armv7 — **glibc only** | **SIGSEGV** |
+| `socketcan` | none — compiled at install | works |
+
+`classic-level` arrives via `level@^9`, which
+`@tyrion-integration/cumulus-convection-cloud` depends on, so the crash fires
+the moment a flow contains a **Tyrion Cloud** node. DELTA 4 in the Dockerfile
+runs `npm rebuild --build-from-source classic-level` in the build stage, which
+links it against musl; `node-gyp-build` then prefers `build/Release` over
+`prebuilds/`. Verified under emulation: open, put, get and close all succeed.
+
+If you add a palette with a native addon, check this first:
+
+```bash
+docker run --rm --platform linux/arm/v7 --entrypoint sh <image> -c   'ls node_modules/<pkg>/prebuilds/linux-arm/'
+```
+
+No `.musl` in those filenames means you must add the package to DELTA 4.
 
 ### Two deliberate overrides
 
@@ -230,7 +263,7 @@ nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 ->
 ```bash
 docker stop Node-Red-V5 && docker rm Node-Red-V5      # container only
 docker volume rm node-red-v5                          # flows of the new instance
-docker rmi node-red:5.0.6-tyrion2-armv7               # frees ~330 MB in /var/lib/docker
+docker rmi node-red:5.0.6-tyrion3-armv7               # frees ~330 MB in /var/lib/docker
 ```
 
 The legacy container is never modified by any of the above.

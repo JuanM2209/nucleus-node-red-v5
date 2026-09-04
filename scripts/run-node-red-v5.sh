@@ -4,7 +4,7 @@
 # Written as single-line commands: the Cockpit web terminal breaks "\" continuations.
 set -eu
 
-IMAGE="${IMAGE:-nodered/node-red:4.1.14-22}"
+IMAGE="${IMAGE:-node-red:5.0.6-22-armv7}"
 NAME="${NAME:-Node-Red-V5}"
 PORT="${PORT:-1885}"
 VOLUME="${VOLUME:-node-red-v5}"

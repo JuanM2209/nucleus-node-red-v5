@@ -24,8 +24,13 @@ import tarfile
 import tempfile
 import urllib.request
 
-REGISTRY = "https://registry-1.docker.io"
-AUTH = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull"
+# Override with env vars to read from another registry, e.g. a local `registry:2`:
+#   REGISTRY=http://localhost:5000 AUTH= python3 pull-docker-archive.py node-red 5.0.6-22-armv7 arm v7 out.tar
+REGISTRY = os.environ.get("REGISTRY", "https://registry-1.docker.io")
+AUTH = os.environ.get(
+    "AUTH",
+    "https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull",
+)
 ACCEPT_INDEX = ", ".join([
     "application/vnd.docker.distribution.manifest.list.v2+json",
     "application/vnd.oci.image.index.v1+json",
@@ -77,7 +82,7 @@ def pick_platform_manifest(index, arch, variant):
 
 
 def main(repo, tag, arch, variant, out_path):
-    token = json.loads(get(AUTH.format(repo=repo)))["token"]
+    token = json.loads(get(AUTH.format(repo=repo)))["token"] if AUTH else None
     index = json.loads(get(f"{REGISTRY}/v2/{repo}/manifests/{tag}", token, ACCEPT_INDEX))
     digest = pick_platform_manifest(index, arch, variant)
     manifest = index if digest is None else json.loads(

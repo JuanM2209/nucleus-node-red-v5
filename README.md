@@ -1,0 +1,112 @@
+# Nucleus Node-RED V5 sidecar
+
+Run a **current Node-RED (4.1.x, Node.js 22)** side by side with the legacy
+`nucleus-node-red` container (Node-RED 0.20.8 / Node.js 8) on a Nucleus edge
+device, without touching the production instance.
+
+| Instance | Container | Image | Port | Data |
+|---|---|---|---|---|
+| Legacy (production) | `nucleus-node-red` | `tyrionintegration/nucleus-node-red` | 1880 | volume `node-red` |
+| New | `Node-Red-V5` | `nodered/node-red:4.1.14-22` | **1885** | volume `node-red-v5` |
+
+Both use `--network host`, so the new instance is reachable on the device at
+`http://<device-ip>:1885` and can be exposed through the Nucleus portal like
+any other port.
+
+## Why it is not a plain `docker pull`
+
+The Nucleus i.MX7 devices run **Docker 18.03 on a 32-bit ARM (armv7l)** with
+kernel 4.9. Two things get in the way:
+
+1. **`nodered/node-red:latest` no longer ships an `arm/v7` build** (only
+   `amd64` and `arm64`). The newest tag that still publishes `linux/arm/v7` is
+   the `4.1.x` line, e.g. `4.1.14-22`. Always pin the full tag.
+2. **Docker 18.03 cannot pull OCI-format images.** Node-RED images are now
+   published as OCI image indexes; the old daemon fails with
+   `Error response from daemon: missing signature key` (pulling by digest
+   fails the same way). `docker load` of a classic docker-archive tar still
+   works, so the image is repacked with
+   [`tools/pull-docker-archive.py`](tools/pull-docker-archive.py) and loaded
+   on the device.
+
+See [docs/DIAGNOSTIC.md](docs/DIAGNOSTIC.md) for the full device diagnostic.
+
+## Quick start
+
+On any machine with Python 3 (no Docker needed):
+
+```bash
+python3 tools/pull-docker-archive.py nodered/node-red 4.1.14-22 arm v7 nodered-4.1.14-22-armv7.tar
+sha256sum nodered-4.1.14-22-armv7.tar
+```
+
+A pre-built archive is attached to the GitHub release
+`nodered-4.1.14-22-armv7` of this repo.
+
+On the device (Cockpit terminal or SSH, run as a user in the `docker` group):
+
+```bash
+cd /data
+curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-4.1.14-22-armv7/nodered-4.1.14-22-armv7.tar
+sha256sum nrv5.tar          # compare with the release notes
+docker load -i nrv5.tar
+sh scripts/run-node-red-v5.sh
+rm nrv5.tar
+```
+
+`scripts/run-node-red-v5.sh` is a one-liner-safe script (the Cockpit terminal
+breaks `\` line continuations, so it is written on one line inside the file).
+
+## What the run command does
+
+```bash
+docker run -d --name Node-Red-V5 --restart unless-stopped --network host \
+  -e PORT=1885 -e NODE_OPTIONS=--max-old-space-size=256 \
+  --memory 400m --memory-swap 400m --log-driver journald \
+  -v node-red-v5:/data nodered/node-red:4.1.14-22
+```
+
+* `--network host` + `PORT=1885`: the official image's `settings.js` reads
+  `uiPort` from `PORT`. Host networking mirrors the legacy container and keeps
+  serial / localhost services reachable.
+* `--memory 400m`: the device has 1 GB RAM. The cap protects the production
+  Node-RED from a runaway flow in the new instance.
+* `--restart unless-stopped`: comes back after a reboot, but a deliberate
+  `docker stop Node-Red-V5` sticks (unlike the `always` policy used by the
+  production container).
+* `-v node-red-v5:/data`: separate named volume; nothing is shared with the
+  legacy instance.
+* No `--device` / `--group-add`: the new instance does not get the serial
+  port or USB printer by default. Add `--device /dev/ttymxc5 --group-add 20`
+  only if the flow needs it, and never let both instances open the same
+  serial port at the same time.
+
+## Verify
+
+```bash
+docker ps --format '{{.Names}} {{.Status}}'
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:1885/
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:1880/
+docker logs Node-Red-V5 2>&1 | grep -E 'Node-RED version|Node.js  version|Server now running'
+docker stats --no-stream
+```
+
+## Rollback
+
+```bash
+docker stop Node-Red-V5 && docker rm Node-Red-V5      # container only
+docker volume rm node-red-v5                          # flows of the new instance
+docker rmi nodered/node-red:4.1.14-22                 # frees ~500 MB in /var/lib/docker
+```
+
+The legacy container is never modified by any of the above.
+
+## Repo layout
+
+```
+README.md                   this file
+docs/DIAGNOSTIC.md          device diagnostic (hardware, Docker, network, containers)
+scripts/diagnose.sh         re-runs the diagnostic on any Nucleus device
+scripts/run-node-red-v5.sh  creates the Node-Red-V5 container
+tools/pull-docker-archive.py builds a docker-archive tar from Docker Hub
+```

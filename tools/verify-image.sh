@@ -8,7 +8,8 @@
 set -eu
 IMAGE="${1:?image tag required}"
 export MSYS_NO_PATHCONV=1
-run() { docker run --rm --platform linux/arm/v7 --entrypoint sh "$IMAGE" -c "$1"; }
+run()  { docker run --rm --platform linux/arm/v7 --entrypoint sh "$IMAGE" -c "$1"; }
+runr() { docker run --rm --platform linux/arm/v7 --user 0 --entrypoint sh "$IMAGE" -c "$1"; }  # root: needed to apk add test tools
 
 echo "== 1. classic-level must open/put/get/close from build/Release (glibc prebuild segfaults on musl)"
 run 'node -e "
@@ -20,7 +21,7 @@ db.open().then(()=>db.put(\"k\",\"v\")).then(()=>db.get(\"k\")).then(v=>{if(v!==
 "; echo "EXIT=$?"' | tee /dev/stderr | grep -q 'EXIT=0'
 
 echo "== 2. modbus-serial must be upstream, and connectRTUBuffered must not segfault (openp4nr fork does)"
-run 'apk add --no-cache socat >/dev/null 2>&1 || true
+runr 'apk add --no-cache socat >/dev/null 2>&1 || true
 node -e "
 const p=require(\"/usr/src/node-red/node_modules/@openp4nr/modbus-serial/package.json\");
 if(p.name!==\"modbus-serial\"){console.error(\"override missing: \"+p.name);process.exit(2)}

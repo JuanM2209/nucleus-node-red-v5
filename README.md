@@ -7,7 +7,7 @@ device, without touching the production instance.
 | Instance | Container | Image | Port | Data |
 |---|---|---|---|---|
 | Legacy (production) | `nucleus-node-red` | `tyrionintegration/nucleus-node-red` | 1880 | volume `node-red` |
-| New | `Node-Red-V5` | `node-red:5.0.6-tyrion-armv7` (built here) | **1885** | volume `node-red-v5` |
+| New | `Node-Red-V5` | `node-red:5.0.6-tyrion2-armv7` (built here) | **1885** | volume `node-red-v5` |
 
 Both use `--network host`, so the new instance is reachable on the device at
 `http://<device-ip>:1885` and can be exposed through the Nucleus portal like
@@ -49,17 +49,17 @@ To build Node-RED 5.x for arm/v7 yourself you need Docker with buildx and QEMU
 
 ```bash
 cd image && sh build-armv7.sh
-docker save node-red:5.0.6-tyrion-armv7 -o nodered.tar
+docker save node-red:5.0.6-tyrion2-armv7 -o nodered.tar
 ```
 
 A pre-built archive is attached to the GitHub release
-`nodered-5.0.6-tyrion-armv7` of this repo.
+`nodered-5.0.6-tyrion2-armv7` of this repo.
 
 On the device (Cockpit terminal or SSH, run as a user in the `docker` group):
 
 ```bash
 cd /data
-curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-tyrion-armv7/nodered-5.0.6-tyrion-armv7.tar
+curl -L -o nrv5.tar https://github.com/JuanM2209/nucleus-node-red-v5/releases/download/nodered-5.0.6-tyrion2-armv7/nodered-5.0.6-tyrion2-armv7.tar
 sha256sum nrv5.tar          # compare with the release notes
 docker load -i nrv5.tar
 sh scripts/run-node-red-v5.sh
@@ -75,7 +75,7 @@ breaks `\` line continuations, so it is written on one line inside the file).
 docker run -d --name Node-Red-V5 --restart unless-stopped --network host \
   -e PORT=1885 -e NODE_OPTIONS=--max-old-space-size=256 \
   --memory 400m --memory-swap 400m --log-driver journald \
-  -v node-red-v5:/data node-red:5.0.6-tyrion-armv7
+  -v node-red-v5:/data node-red:5.0.6-tyrion2-armv7
 ```
 
 * `--network host` + `PORT=1885`: the official image's `settings.js` reads
@@ -127,6 +127,36 @@ Several of these are versions the legacy Node 8 instance could never run:
 Modbus 4.1 to 5.60, Sparkplug 1.2 to 3.1 (birth-immediately, UDT templates,
 TCK conformance), aedes 0.3.1 to 1.3.0.
 
+### Serial passthrough
+
+The container gets `--device=/dev/ttymxc5 --group-add=20`, mirroring the fleet
+`run.sh`. The group matters: the container runs as uid 1000 `node-red` and the
+device is `root:dialout crw-rw----`, so without gid 20 every `open()` returns
+EACCES. Both flags are conditional in the run script, so the same script works
+on a Nucleus with no serial line.
+
+**A serial line is exclusive.** Only one process at a time can hold
+`/dev/ttymxc5`: this instance, the legacy Node-RED, or the portal's Modbus
+Bridge (mbusd on TCP 2202). Starting the bridge while a flow here is polling
+will take the port away. The run script warns when another process already
+holds it.
+
+### Two deliberate overrides
+
+`@openp4nr/modbus-serial` is **overridden to upstream `modbus-serial@8.0.25`**.
+`node-red-contrib-modbus` 5.27+ swapped its upstream dependency for this fork,
+pulled from a cloudsmith.io tarball rather than npm, and on armv7 the fork
+**segfaults inside `connectRTUBuffered()`** — it kills the Node-RED process the
+instant flows start, so `--restart` turns it into a crash loop rather than an
+error you can see in the debug pane.
+
+Isolation, for anyone who hits this again: raw `serialport` 13 opens, writes and
+closes `/dev/ttymxc5` fine, and the crash reproduces with **no serial device
+attached at all**, so neither the passthrough nor the hardware is implicated.
+Upstream `modbus-serial@8.0.25` pulls the very same `serialport` 13 and returns
+a normal `Timed out` instead of dying. The override keeps the NR5-aware
+`node-red-contrib-modbus` 5.60.2 while dropping the fork.
+
 ### One deliberate omission
 
 `@tyrion-integration/node-red-contrib-nucleus-services-cloud` is **not**
@@ -162,6 +192,11 @@ Smaller *and* fully loaded, from two changes in
   Dockerfile copies `node_modules` and *then* chowns it, which rewrites every
   file into a second layer — the tree is stored twice.
 
+`udev` is added back to the base packages (~1 MB), because upstream ships it
+only inside `install_devtools.sh`. Without `udevadm`, `SerialPort.list()`
+rejects with `spawn udevadm ENOENT` and the port-scan button in every serial
+node's config dialog stops working.
+
 ## Verified result (NFBM-440, 2026-09-04)
 
 ```
@@ -195,7 +230,7 @@ nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 ->
 ```bash
 docker stop Node-Red-V5 && docker rm Node-Red-V5      # container only
 docker volume rm node-red-v5                          # flows of the new instance
-docker rmi node-red:5.0.6-tyrion-armv7                # frees ~300 MB in /var/lib/docker
+docker rmi node-red:5.0.6-tyrion2-armv7               # frees ~330 MB in /var/lib/docker
 ```
 
 The legacy container is never modified by any of the above.

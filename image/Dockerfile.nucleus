@@ -1,5 +1,5 @@
 # Derived from the official node-red-docker `docker-custom/Dockerfile.custom`.
-# Five deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
+# Eight deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
 # changes stay easy to merge.
 ARG ARCH=amd64
 ARG NODE_VERSION=24
@@ -17,12 +17,8 @@ RUN set -ex && \
     apk add --no-cache \
         bash \
         tzdata \
-        iputils \
         curl \
-        nano \
-        git \
         openssl \
-        openssh-client \
         ca-certificates \
         udev && \
     mkdir -p /usr/src/node-red /data && \
@@ -36,10 +32,9 @@ RUN set -ex && \
 # Set work directory
 WORKDIR /usr/src/node-red
 
-# Setup SSH known_hosts file
-COPY known_hosts.sh .
-RUN ./known_hosts.sh /etc/ssh/ssh_known_hosts && rm /usr/src/node-red/known_hosts.sh
-RUN echo "PubkeyAcceptedKeyTypes +ssh-rsa" >> /etc/ssh/ssh_config
+# NUCLEUS DELTA 6b: git, openssh-client, nano and iputils are not installed (Projects is
+# disabled and nothing in the Tyrion palettes shells out to them), so the upstream
+# known_hosts / ssh_config setup lines are dropped with them. -9.1 MB.
 
 # package.json contains Node-RED NPM module and node dependencies
 COPY package.json .
@@ -54,6 +49,7 @@ RUN apk add --no-cache --virtual buildtools build-base linux-headers udev python
     /tmp/remove_native_gpio.sh && \
     npm rebuild --build-from-source classic-level && \
     sh /tmp/elf-gate.sh /usr/src/node-red/node_modules && \
+    sh /tmp/prune-node-modules.sh /usr/src/node-red/node_modules && \
     cp -R node_modules prod_node_modules
 
 # NUCLEUS DELTA 5 (in the RUN above): scripts/elf-gate.sh fails the build if any
@@ -112,7 +108,19 @@ COPY --from=build --chown=node-red:root /usr/src/node-red/prod_node_modules ./no
 # add the module to package.json and rebuild the image instead.
 RUN rm -r /tmp/*
 
-RUN npm config set cache /data/.npm --global 
+# NUCLEUS DELTA 7: the system npm is dead weight at runtime. entrypoint.sh runs node
+# directly, and Node-RED's Manage Palette resolves its OWN bundled copy via
+# require.resolve('npm/package.json') -> node_modules/npm. Write the cache config
+# with the bundled copy, then drop /usr/local/lib/node_modules. -13.8 MB.
+# The node binary from node:22-alpine/arm is shipped UNSTRIPPED (4.7 MB .symtab,
+# 10.2 MB .strtab, .debug_*); strip --strip-all keeps .dynsym and every allocated
+# section byte-identical. -15.9 MB. Both only materialise thanks to DELTA 8.
+RUN node node_modules/npm/bin/npm-cli.js config set cache /data/.npm --global && \
+    rm -rf /usr/local/lib/node_modules && \
+    rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack && \
+    apk add --no-cache --virtual .strip-deps binutils && \
+    strip --strip-all /usr/local/bin/node && \
+    apk del .strip-deps 
 
 USER node-red
 
@@ -132,4 +140,31 @@ EXPOSE 1880
 HEALTHCHECK CMD node /healthcheck.js
 
 # ENTRYPOINT ["npm", "start", "--cache", "/data/.npm", "--", "--userDir", "/data"]
+ENTRYPOINT ["./entrypoint.sh"]
+
+#### Stage FINAL ######################################################################################################
+# NUCLEUS DELTA 8: everything above that deletes files living in the node:22-alpine base
+# layer (system npm, apk packages, the unstripped node) would otherwise only write
+# whiteouts - the bytes stay in the lower layer and the pulled/loaded image does not
+# shrink. Copying the finished release rootfs into a scratch stage collapses it to a
+# single layer, which is also the friendliest shape for the Docker 18.03 docker-load path.
+# COPY between stages preserves uid/gid; tools/verify-image.sh checks /data is 1000:0.
+FROM scratch AS final
+ARG NODE_RED_VERSION
+ARG BUILD_DATE
+ARG BUILD_VERSION
+COPY --from=release / /
+WORKDIR /usr/src/node-red
+USER node-red
+ENV NODE_RED_VERSION=$NODE_RED_VERSION \
+    NODE_PATH=/usr/src/node-red/node_modules:/data/node_modules \
+    PATH=/usr/src/node-red/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    FLOWS=flows.json
+LABEL org.label-schema.build-date=${BUILD_DATE} \
+    org.label-schema.name="Node-RED" \
+    org.label-schema.version=${BUILD_VERSION} \
+    org.label-schema.description="Node-RED 5 for Nucleus armv7 edge devices, Tyrion palette included" \
+    org.opencontainers.image.source="https://github.com/JuanM2209/nucleus-node-red-v5"
+EXPOSE 1880
+HEALTHCHECK CMD node /healthcheck.js
 ENTRYPOINT ["./entrypoint.sh"]

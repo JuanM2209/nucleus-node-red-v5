@@ -43,11 +43,14 @@ run 'node -e "require(\"serialport\");console.log(\"serialport OK\")" && which u
 echo "== 4. Node-RED must boot to 18 modules with 0 errors and load the Tyrion plugin"
 # Windows/MSYS note: python cannot see MSYS's /tmp, so keep the scratch file in cwd.
 NODES_JSON="./.verify-nodes.json"
-cid=$(docker run -d --platform linux/arm/v7 -p 18899:1880 "$IMAGE")
+# Use a port nobody else is on, and clear any wedge from a previous aborted run.
+PORT="${VERIFY_PORT:-18899}"
+for old in $(docker ps -aq --filter "publish=$PORT"); do docker rm -f "$old" >/dev/null; done
+cid=$(docker run -d --platform linux/arm/v7 -p "$PORT":1880 "$IMAGE")
 ok=0
 for i in $(seq 1 45); do
   sleep 4
-  if curl -sf http://localhost:18899/nodes -H 'Accept: application/json' -o "$NODES_JSON" 2>/dev/null; then
+  if curl -sf "http://localhost:$PORT/nodes" -H 'Accept: application/json' -o "$NODES_JSON" 2>/dev/null; then
     mods=$(python -c "import json,sys;n=json.load(open(sys.argv[1]));print(len({m['module'] for m in n}))" "$NODES_JSON")
     errs=$(python -c "import json,sys;n=json.load(open(sys.argv[1]));print(sum(1 for m in n if m.get('err')))" "$NODES_JSON")
     plugin=$(docker logs "$cid" 2>&1 | grep -c 'Plugin loaded successfully' || true)

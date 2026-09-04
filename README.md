@@ -91,6 +91,34 @@ docker logs Node-Red-V5 2>&1 | grep -E 'Node-RED version|Node.js  version|Server
 docker stats --no-stream
 ```
 
+## Verified result (NFBM-440, 2026-09-04)
+
+```
+Node-Red-V5      | Up (healthy)   Node-RED v4.1.14 / Node.js v22.23.2   :1885 -> 200
+nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 -> 200
+```
+
+* Memory after start: new instance 35 MiB of its 400 MiB cap, legacy 84 MiB,
+  ~680 MB still free on the device.
+* The image takes 553 MB in `/var/lib/docker`; `/data` kept 7.3 GB free.
+* The container health check (`/healthcheck.js`) reads `settings.uiPort`, so it
+  genuinely probes 1885 and not the legacy 1880.
+* Download of the 196 MB release asset over the device wlan0 took ~30 s;
+  `docker load` on the i.MX7 took about 6 minutes (CPU-bound decompression).
+* Cockpit web terminal timing: run `docker load` with `nohup ... &` and poll,
+  otherwise the terminal session may time out mid-load.
+
+## Next steps for the flow developer
+
+* Open `http://<device-ip>:1885` (or expose port 1885 through the Nucleus
+  portal). The editor has **no adminAuth yet**: set `adminAuth` in
+  `/data/settings.js` inside the `node-red-v5` volume before leaving it on a
+  shared network.
+* Modern palettes (Sparkplug B 3.x, aedes, dashboard 2) install normally here;
+  they do not on the Node 8 legacy instance.
+* Import flows from the legacy instance with Export/Import JSON. Do not point
+  both instances at the same serial port or printer at the same time.
+
 ## Rollback
 
 ```bash

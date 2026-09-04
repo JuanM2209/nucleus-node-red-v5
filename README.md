@@ -174,6 +174,44 @@ docker run --rm --platform linux/arm/v7 --entrypoint sh <image> -c   'ls node_mo
 
 No `.musl` in those filenames means you must add the package to DELTA 4.
 
+### Guard rails that keep it from coming back
+
+* **Build gate** — `image/scripts/elf-gate.sh` runs in the build stage after
+  every `npm rebuild`. It fails the build if any native addon that would load on
+  linux/arm/musl is a glibc-only prebuild with no local `build/Release`. That is
+  the exact shape of the classic-level crash, so any recurrence is a build error
+  rather than a field crash loop.
+* **Release gate** — `tools/verify-image.sh <image>` runs four checks under
+  emulation before an image is published: classic-level open/put/get/close from
+  `build/Release`; the Modbus override resolves to upstream and
+  `connectRTUBuffered` returns on a PTY; serialport plus `udevadm`; and a full
+  Node-RED boot to 18 modules, 0 errors, Tyrion plugin loaded. Every check maps
+  to a crash that actually happened.
+* **Recovery** — if a flow ever crash-loops the runtime again, restart the
+  container with `-e NODE_RED_ENABLE_SAFE_MODE=true`. The editor comes up with
+  flows stopped, you fix or remove the offending node, deploy, then recreate the
+  container without the variable. No surgery in `/data` is needed.
+
+### The one remaining brick vector
+
+Manage Palette is still enabled. The image deliberately has no compiler, so a
+native addon installed from the editor will use its prebuild — and if that
+prebuild is glibc-only for arm (as classic-level's is), it will segfault on
+first use exactly like the crash above. Two ways to close this, both the
+operator's call:
+
+* `externalModules.palette.allowInstall: false` in `/data/settings.js` (no
+  installs from the editor; palettes are added via `image/package.json` and a
+  rebuild, which is where the build gate protects you), or
+* keep installs enabled and run the check in the previous section on any new
+  module before deploying a flow that uses it.
+
+A note for future hardware: the audit found every glibc arm prebuild in this
+tree targets ARMv7VE with VFPv4, NEON and hardware divide. Fine on the
+Cortex-A7 in the i.MX7D; would `SIGILL` on a Cortex-A8/A9 even with a musl
+build. All musl binaries that actually load here are built conservatively
+(ARMv5TE/VFPv2, no NEON).
+
 ### Two deliberate overrides
 
 `@openp4nr/modbus-serial` is **overridden to upstream `modbus-serial@8.0.25`**.

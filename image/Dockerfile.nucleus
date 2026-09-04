@@ -1,5 +1,5 @@
 # Derived from the official node-red-docker `docker-custom/Dockerfile.custom`.
-# Four deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
+# Five deltas, each marked NUCLEUS DELTA below. Keep them minimal so upstream
 # changes stay easy to merge.
 ARG ARCH=amd64
 ARG NODE_VERSION=24
@@ -53,7 +53,13 @@ RUN apk add --no-cache --virtual buildtools build-base linux-headers udev python
     npm install --unsafe-perm --no-update-notifier --no-fund --only=production && \
     /tmp/remove_native_gpio.sh && \
     npm rebuild --build-from-source classic-level && \
+    sh /tmp/elf-gate.sh /usr/src/node-red/node_modules && \
     cp -R node_modules prod_node_modules
+
+# NUCLEUS DELTA 5 (in the RUN above): scripts/elf-gate.sh fails the build if any
+# native addon that would load on linux/arm/musl is a glibc-only prebuild with no
+# local build/Release. That is the exact shape of the classic-level crash; the
+# gate makes any recurrence a build error instead of a field crash loop.
 
 # NUCLEUS DELTA 4 (in the RUN above): classic-level is rebuilt from source.
 # It ships prebuilds/linux-arm/classic-level.armv7.node built against GLIBC

@@ -296,6 +296,44 @@ nucleus-node-red | Up 18 hours    Node-RED v0.20.8 / Node.js v8.17.0    :1880 ->
 * Import flows from the legacy instance with Export/Import JSON. Do not point
   both instances at the same serial port or printer at the same time.
 
+## What the Tyrion I/O nodes actually do (read before trusting a green dot)
+
+The Analog Input, Digital Input, Digital Output and Diagnostics nodes do not
+touch hardware. They POST JSON to `ioserver`, a daemon on the device at
+`http://localhost:3310/rpc/nucleus.io.Analog/Read` (and `.../Digital/Read`),
+on a `setInterval(pollrate)`. Both Node-RED containers run with `--network
+host`, so they read the **same** daemon and get the **same** numbers.
+
+Two generations are installed and are line-for-line identical apart from the
+registered type name, which is why every palette entry appears twice with the
+same label (`nucleus-services-*` is gen1, `nucleus-convection-*` is gen2). Pick
+one generation per flow and stay with it.
+
+`ioserver` speaks proto3-JSON, so **a zero-valued field is omitted**:
+`{"pin":"AI1"}` means AI1 read exactly 0, `{"pin":"DI1","is_valid":true}` means
+DI1 is off. The nodes map an absent value to 0 silently.
+
+A 73-finding code review, each item reproduced against a mock `ioserver` on the
+real image, confirmed these defects. None is a Node 22 regression; the Node 8
+instance behaves identically.
+
+| Sev | Node | What you see | What is actually true |
+|---|---|---|---|
+| CRITICAL | Analog Input | green `AI1: 0` | any 2xx reply without a numeric `value` (empty body, HTML, error JSON, `null`, `is_valid:false`) is rendered as 0 and **sent downstream** as a good sample. With a 4-20 mA to 0-100 scaling it shows `-25`. Only a non-2xx or a network error turns the dot red. |
+| HIGH | Analog / Digital In | last value, green | an `ioserver` that is alive but not answering leaves the last value frozen for **60 s** (axios idle timeout); poll ticks are dropped silently. |
+| HIGH | Digital Output | state you commanded | the RPC reply is ignored and there is no read-back; a failed write is log-only, the message is dropped, and no Catch node fires. |
+| HIGH | Digital Input | phantom edges | no in-flight guard, so overlapping polls can arrive out of order and latch the wrong state. |
+| HIGH | Diagnostics | silence | a one-token typo (`err` vs `error`) in the catch handler throws `ReferenceError` whenever port 9000 is down, so the node emits nothing at all. `Disk Usage` reports percent **free**, and `Process CPU` is whole-system CPU. |
+| LOW | Analog Input | green number | no under/over-range detection: an open 4-20 mA loop (0 mA) or a NAMUR fault current displays as an ordinary green value. |
+
+**Operational rule:** the green dot means only "ioserver answered 2xx and the
+promise resolved". A live 4-20 mA loop never reads below 4; a green 0 on a
+4-20 input is an open loop or a missing transmitter. To validate accuracy,
+inject a known current (for example 12 mA) and expect `12.0`.
+
+The one-line fix for the CRITICAL item, if Tyrion republishes the palette:
+reject anything that is not a finite number and do not send on that path.
+
 ## Rollback
 
 ```bash
